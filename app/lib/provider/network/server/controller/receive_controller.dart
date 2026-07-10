@@ -276,7 +276,7 @@ class ReceiveController {
       };
     } else {
       final message = server.getState().session?.message;
-      final senderFingerprint = dto.info.fingerprint;
+      final String senderFingerprint = server.getState().session!.sender.fingerprint;
 
       if (message != null) {
         // Message already received
