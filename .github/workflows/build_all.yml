@@ -1,0 +1,204 @@
+name: Build Chat (Android + Windows + macOS)
+
+# Custom workflow for the "chat" fork.
+# Builds installable packages for the three platforms the maintainer needs,
+# without the official signing secrets or self-hosted runners.
+#   - Android: universal release APK (signed with a keystore generated at build time)
+#   - Windows: Inno Setup installer (.exe)
+#   - macOS:   drag-to-Applications disk image (.dmg, unsigned)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: "3.41.9"
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Remove proprietary dependencies (donations / in-app purchase)
+        run: sh scripts/remove_proprietary_dependencies.sh
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: "stable"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Pin toolchain from rust-toolchain.toml
+        working-directory: app
+        run: rustup show
+
+      - name: Generate signing keystore and key.properties
+        run: |
+          keytool -genkeypair -v \
+            -keystore "$GITHUB_WORKSPACE/app/android/app-keystore.jks" \
+            -storetype JKS -keyalg RSA -keysize 2048 -validity 10000 \
+            -alias localsend -storepass localsend123 -keypass localsend123 \
+            -dname "CN=LocalSend Chat, OU=Dev, O=LocalSend, L=NA, S=NA, C=NA"
+          cat > "$GITHUB_WORKSPACE/app/android/key.properties" <<EOF
+          storePassword=localsend123
+          keyPassword=localsend123
+          keyAlias=localsend
+          storeFile=$GITHUB_WORKSPACE/app/android/app-keystore.jks
+          EOF
+
+      - name: Dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Build APK (universal, release)
+        working-directory: app
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Enable long paths
+        run: git config --system core.longpaths true
+
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: "stable"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Build Windows
+        working-directory: app
+        run: flutter build windows
+
+      - name: Add runtime files
+        working-directory: app
+        run: |
+          "{}" | Out-File -Encoding ascii build/windows/x64/runner/Release/settings.json
+          Copy-Item ../scripts/windows/x64/msvcp140.dll build/windows/x64/runner/Release/
+          Copy-Item ../scripts/windows/x64/vcruntime140.dll build/windows/x64/runner/Release/
+          Copy-Item ../scripts/windows/x64/vcruntime140_1.dll build/windows/x64/runner/Release/
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Write installer script
+        shell: pwsh
+        run: |
+          @'
+          #define MyAppName "LocalSend Chat"
+          #define MyAppVersion "1.17.0"
+          #define MyAppExeName "localsend_app.exe"
+
+          [Setup]
+          AppId={{B6A9C2E4-1F3D-4E8A-9C7B-2D5E8F1A6C3B}
+          AppName={#MyAppName}
+          AppVersion={#MyAppVersion}
+          AppPublisher=LocalSend Chat Fork
+          DefaultDirName={autopf}\LocalSendChat
+          DisableProgramGroupPage=yes
+          PrivilegesRequiredOverridesAllowed=dialog
+          OutputDir=installer-output
+          OutputBaseFilename=LocalSend-Chat-Setup
+          Compression=lzma
+          SolidCompression=yes
+          WizardStyle=modern
+          ArchitecturesInstallIn64BitMode=x64compatible
+          ArchitecturesAllowed=x64compatible
+
+          [Languages]
+          Name: "english"; MessagesFile: "compiler:Default.isl"
+
+          [Tasks]
+          Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+          [Files]
+          Source: "app\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+          Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+
+          [Run]
+          Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+          '@ | Out-File -Encoding utf8 installer.iss
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: installer-output/LocalSend-Chat-Setup.exe
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: "stable"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Pin toolchain from rust-toolchain.toml
+        working-directory: app
+        run: rustup show
+
+      - name: Dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Build macOS
+        working-directory: app
+        run: flutter build macos --release
+
+      - name: Create DMG
+        working-directory: app
+        run: |
+          APP_PATH=$(find build/macos/Build/Products/Release -maxdepth 1 -name "*.app" | head -n1)
+          echo "App bundle: $APP_PATH"
+          if [ -z "$APP_PATH" ]; then echo "No .app produced"; exit 1; fi
+          rm -rf dmg_root
+          mkdir -p dmg_root
+          cp -R "$APP_PATH" dmg_root/
+          ln -s /Applications dmg_root/Applications
+          hdiutil create -volname "LocalSend Chat" -srcfolder dmg_root -ov -format UDZO LocalSend-Chat.dmg
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: app/LocalSend-Chat.dmg
+          if-no-files-found: error

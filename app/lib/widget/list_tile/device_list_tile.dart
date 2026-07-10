@@ -17,6 +17,7 @@ class DeviceListTile extends StatelessWidget {
   final double? progress;
   final VoidCallback? onTap;
   final VoidCallback? onFavoriteTap;
+  final VoidCallback? onChatTap;
 
   const DeviceListTile({
     required this.device,
@@ -26,6 +27,7 @@ class DeviceListTile extends StatelessWidget {
     this.progress,
     this.onTap,
     this.onFavoriteTap,
+    this.onChatTap,
   });
 
   @override
@@ -34,10 +36,22 @@ class DeviceListTile extends StatelessWidget {
     return CustomListTile(
       icon: Icon(device.deviceType.icon, size: 46),
       title: Text(nameOverride ?? device.alias, style: const TextStyle(fontSize: 20)),
-      trailing: onFavoriteTap != null
-          ? IconButton(
-              icon: Icon(isFavorite ? Icons.favorite : Icons.favorite_border),
-              onPressed: onFavoriteTap,
+      trailing: (onChatTap != null || onFavoriteTap != null)
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (onChatTap != null)
+                  IconButton(
+                    tooltip: 'Chat',
+                    icon: const Icon(Icons.chat_bubble_outline),
+                    onPressed: onChatTap,
+                  ),
+                if (onFavoriteTap != null)
+                  IconButton(
+                    icon: Icon(isFavorite ? Icons.favorite : Icons.favorite_border),
+                    onPressed: onFavoriteTap,
+                  ),
+              ],
             )
           : null,
       subTitle: Wrap(

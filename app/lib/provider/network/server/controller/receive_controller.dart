@@ -24,6 +24,7 @@ import 'package:localsend_app/pages/home_page.dart';
 import 'package:localsend_app/pages/home_page_controller.dart';
 import 'package:localsend_app/pages/progress_page.dart';
 import 'package:localsend_app/pages/receive_page.dart';
+import 'package:localsend_app/provider/chat_provider.dart';
 import 'package:localsend_app/provider/device_info_provider.dart';
 import 'package:localsend_app/provider/favorites_provider.dart';
 import 'package:localsend_app/provider/http_provider.dart';
@@ -274,11 +275,9 @@ class ReceiveController {
         for (final f in dto.files.values) f.id: f.fileName,
       };
     } else {
-      if (checkPlatformHasTray() && (await windowManager.isMinimized() || !(await windowManager.isVisible()) || !(await windowManager.isFocused()))) {
-        await showFromTray();
-      }
-
       final message = server.getState().session?.message;
+      final senderFingerprint = dto.info.fingerprint;
+
       if (message != null) {
         // Message already received
         await server.ref
@@ -296,9 +295,27 @@ class ReceiveController {
                 timestamp: DateTime.now().toUtc(),
               ),
             );
+
+        // Feed the message into the per-peer chat conversation.
+        server.ref.redux(chatProvider).dispatch(
+              AddReceivedMessageAction(fingerprint: senderFingerprint, text: message),
+            );
       }
 
-      final receiveProvider = ViewProvider((ref) {
+      // If a chat window with this peer is currently open, accept the message
+      // silently (respond 204 with an empty selection) so a back-and-forth
+      // conversation is possible without a confirmation popup for every message.
+      // Peers without an open chat keep the normal confirmation flow.
+      final bool autoAcceptChat = message != null && server.ref.read(chatProvider).isActive(senderFingerprint);
+      if (autoAcceptChat) {
+        // Accept silently; the message is already stored in the chat conversation.
+        selection = <String, String>{};
+      } else {
+        if (checkPlatformHasTray() && (await windowManager.isMinimized() || !(await windowManager.isVisible()) || !(await windowManager.isFocused()))) {
+          await showFromTray();
+        }
+
+        final receiveProvider = ViewProvider((ref) {
         final session = ref.watch(serverProvider.select((state) => state?.session));
         return ReceivePageVm(
           status: session?.status,
@@ -339,11 +356,12 @@ class ReceiveController {
         );
       });
 
-      // ignore: use_build_context_synchronously, unawaited_futures
-      Routerino.context.push(() => ReceivePage(receiveProvider));
+        // ignore: use_build_context_synchronously, unawaited_futures
+        Routerino.context.push(() => ReceivePage(receiveProvider));
 
-      // Delayed response (waiting for user's decision)
-      selection = await streamController.stream.first;
+        // Delayed response (waiting for user's decision)
+        selection = await streamController.stream.first;
+      }
     }
 
     if (server.getState().session == null) {
