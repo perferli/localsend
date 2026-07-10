@@ -180,6 +180,16 @@ jobs:
         working-directory: app
         run: flutter pub get
 
+      - name: Disable code signing (no Apple certificate on CI)
+        working-directory: app
+        run: |
+          sed -i '' \
+            -e 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' \
+            -e 's/DEVELOPMENT_TEAM = 3W7H4PYMCV;/DEVELOPMENT_TEAM = "";/g' \
+            -e 's/CODE_SIGN_IDENTITY = "Apple Development";/CODE_SIGN_IDENTITY = "-";/g' \
+            -e 's/"CODE_SIGN_IDENTITY\[sdk=macosx\*\]" = "Apple Development";/"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";/g' \
+            macos/Runner.xcodeproj/project.pbxproj
+
       - name: Build macOS
         working-directory: app
         run: flutter build macos --release
