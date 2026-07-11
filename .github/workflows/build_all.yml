@@ -197,6 +197,24 @@ jobs:
         working-directory: app
         run: flutter build macos --release
 
+      # Unsigned CI build: ad-hoc sign so Gatekeeper is less hostile than a
+      # completely unsigned binary. Still NOT notarized — users on first open
+      # may need right-click → Open, or xattr -cr after copying to /Applications.
+      - name: Ad-hoc sign app bundle
+        working-directory: app
+        run: |
+          APP_PATH=$(find build/macos/Build/Products/Release -maxdepth 1 -name "*.app" | head -n1)
+          echo "App bundle: $APP_PATH"
+          if [ -z "$APP_PATH" ]; then echo "No .app produced"; exit 1; fi
+          # Sign nested Mach-O first, then the bundle itself (deep + force).
+          codesign --force --deep --sign - --timestamp=none "$APP_PATH"
+          codesign -dv --verbose=2 "$APP_PATH" || true
+          # Sanity: binary must be executable and arm64/x86_64.
+          file "$APP_PATH/Contents/MacOS/"* || true
+          # Also ship a zip of the .app — sometimes easier to open than DMG
+          # when transferred via Windows/network shares (DMG quarantine quirks).
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" LocalSend-Chat-macOS.zip
+
       - name: Create DMG
         working-directory: app
         run: |
@@ -205,13 +223,18 @@ jobs:
           if [ -z "$APP_PATH" ]; then echo "No .app produced"; exit 1; fi
           rm -rf dmg_root
           mkdir -p dmg_root
-          cp -R "$APP_PATH" dmg_root/
+          # ditto preserves macOS app bundle metadata better than cp -R
+          ditto "$APP_PATH" "dmg_root/$(basename "$APP_PATH")"
           ln -s /Applications dmg_root/Applications
+          # Clear any quarantine xattr before packaging (runner usually has none)
+          xattr -cr dmg_root || true
           hdiutil create -volname "LocalSend Chat" -srcfolder dmg_root -ov -format UDZO LocalSend-Chat.dmg
 
       - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
-          path: app/LocalSend-Chat.dmg
+          path: |
+            app/LocalSend-Chat.dmg
+            app/LocalSend-Chat-macOS.zip
           if-no-files-found: error
