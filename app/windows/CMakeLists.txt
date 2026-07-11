@@ -74,10 +74,17 @@ set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 
-install(FILES
+# localsend_msix_helper.msix is produced by scripts/compile_windows_msix_helper.ps1
+# and is gitignored. Skip it when absent so plain `flutter build windows`
+# (CI / zip / Inno) still succeeds without the MSIX helper pipeline.
+set(_INSTALL_EXTRA_FILES
   "${BINARY_NAME}.exe.manifest"
-  "localsend_msix_helper.msix"
   "install_msix_helper.ps1"
+)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/localsend_msix_helper.msix")
+  list(APPEND _INSTALL_EXTRA_FILES "localsend_msix_helper.msix")
+endif()
+install(FILES ${_INSTALL_EXTRA_FILES}
   DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 

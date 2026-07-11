@@ -93,9 +93,10 @@ jobs:
         working-directory: app
         run: flutter pub get
 
+      # Verbose so cmake_install failures surface the real file/path error.
       - name: Build Windows
         working-directory: app
-        run: flutter build windows
+        run: flutter build windows -v
 
       - name: Add runtime files
         working-directory: app
