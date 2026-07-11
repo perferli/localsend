@@ -1,3 +1,5 @@
+import 'package:common/model/file_type.dart';
+
 /// The direction of a [ChatMessage] relative to this device.
 enum ChatMessageDirection {
   /// The message was sent by this device.
@@ -7,22 +9,82 @@ enum ChatMessageDirection {
   received,
 }
 
-/// A single chat message exchanged with a peer device.
+/// What kind of content a chat bubble holds.
+enum ChatContentKind {
+  text,
+  image,
+  file,
+}
+
+/// A single chat item exchanged with a peer device.
 ///
-/// Chat messages reuse the existing "send message" mechanism of LocalSend
-/// (the text is embedded into the prepare-upload preview field), but instead of
-/// being a one-shot action they are kept in a per-peer conversation so multiple
-/// messages can be exchanged without re-selecting the clipboard/text each time.
+/// Text reuses LocalSend's prepare-upload preview mechanism.
+/// Images / files reuse the normal file transfer pipeline and are then
+/// surfaced in the conversation after save (receive) or after queue (send).
 class ChatMessage {
-  final String text;
+  final ChatContentKind kind;
   final ChatMessageDirection direction;
   final DateTime timestamp;
 
+  /// Plain text body (for [ChatContentKind.text]).
+  final String? text;
+
+  /// Local path of a saved/sent file (for image/file).
+  final String? filePath;
+
+  /// Original file name shown in the bubble.
+  final String? fileName;
+
+  final FileType? fileType;
+
+  /// Optional in-memory preview bytes (e.g. outgoing image before path exists).
+  final List<int>? previewBytes;
+
   const ChatMessage({
-    required this.text,
+    required this.kind,
     required this.direction,
     required this.timestamp,
+    this.text,
+    this.filePath,
+    this.fileName,
+    this.fileType,
+    this.previewBytes,
   });
 
   bool get isMine => direction == ChatMessageDirection.sent;
+
+  bool get isImage => kind == ChatContentKind.image || fileType == FileType.image;
+
+  factory ChatMessage.text({
+    required String text,
+    required ChatMessageDirection direction,
+    DateTime? timestamp,
+  }) {
+    return ChatMessage(
+      kind: ChatContentKind.text,
+      direction: direction,
+      timestamp: timestamp ?? DateTime.now(),
+      text: text,
+    );
+  }
+
+  factory ChatMessage.attachment({
+    required ChatMessageDirection direction,
+    required String fileName,
+    required FileType fileType,
+    String? filePath,
+    List<int>? previewBytes,
+    DateTime? timestamp,
+  }) {
+    final kind = fileType == FileType.image ? ChatContentKind.image : ChatContentKind.file;
+    return ChatMessage(
+      kind: kind,
+      direction: direction,
+      timestamp: timestamp ?? DateTime.now(),
+      fileName: fileName,
+      fileType: fileType,
+      filePath: filePath,
+      previewBytes: previewBytes,
+    );
+  }
 }

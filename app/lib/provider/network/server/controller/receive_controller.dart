@@ -278,6 +278,10 @@ class ReceiveController {
       final message = server.getState().session?.message;
       final String senderFingerprint = server.getState().session!.sender.fingerprint;
 
+      final senderIp = server.getState().session!.sender.ip;
+      final chatState = server.ref.read(chatProvider);
+      final bool chatOpen = chatState.isActivePeer(fingerprint: senderFingerprint, ip: senderIp);
+
       if (message != null) {
         // Message already received
         await server.ref
@@ -297,19 +301,27 @@ class ReceiveController {
             );
 
         // Feed the message into the per-peer chat conversation.
+        // Resolve by fingerprint, falling back to IP so Mac/Windows mismatches
+        // still land in the open ChatPage thread.
         server.ref.redux(chatProvider).dispatch(
-              AddReceivedMessageAction(fingerprint: senderFingerprint, text: message),
+              AddReceivedMessageAction(
+                fingerprint: senderFingerprint,
+                text: message,
+                ip: senderIp,
+              ),
             );
       }
 
-      // If a chat window with this peer is currently open, accept the message
-      // silently (respond 204 with an empty selection) so a back-and-forth
-      // conversation is possible without a confirmation popup for every message.
+      // If a chat window with this peer is currently open:
+      // - text messages → accept silently (204, empty selection)
+      // - files/images  → auto-accept all so they stream into the chat
       // Peers without an open chat keep the normal confirmation flow.
-      final bool autoAcceptChat = message != null && server.ref.read(chatProvider).isActive(senderFingerprint);
-      if (autoAcceptChat) {
-        // Accept silently; the message is already stored in the chat conversation.
+      if (chatOpen && message != null) {
         selection = <String, String>{};
+      } else if (chatOpen && message == null) {
+        selection = {
+          for (final f in dto.files.values) f.id: f.fileName,
+        };
       } else {
         if (checkPlatformHasTray() && (await windowManager.isMinimized() || !(await windowManager.isVisible()) || !(await windowManager.isFocused()))) {
           await showFromTray();
@@ -575,6 +587,22 @@ class ReceiveController {
             ),
           );
 
+      // If a chat with this peer is open, also show the file/image in the thread.
+      final chatState = server.ref.read(chatProvider);
+      final senderFp = receiveState.sender.fingerprint;
+      final senderIp = receiveState.sender.ip;
+      if (chatState.isActivePeer(fingerprint: senderFp, ip: senderIp)) {
+        server.ref.redux(chatProvider).dispatch(
+              AddReceivedAttachmentAction(
+                fingerprint: senderFp,
+                fileName: receivingFile.desiredName!,
+                fileType: receivingFile.file.fileType,
+                filePath: filePath,
+                ip: senderIp,
+              ),
+            );
+      }
+
       _logger.info('Saved ${receivingFile.file.fileName}.');
     } catch (e, st) {
       server.setState(
@@ -624,24 +652,32 @@ class ReceiveController {
           quickSave = true;
         }
       }
-      if (quickSave) {
+      // Chat auto-accept also needs to free the session, otherwise the next
+      // message/file hits 409 "Blocked by another session".
+      final bool chatAuto = server.ref.read(chatProvider).isActivePeer(
+            fingerprint: session.sender.fingerprint,
+            ip: session.sender.ip,
+          );
+      if (quickSave || chatAuto) {
         // close the session **after** return of the response
         Future.delayed(Duration.zero, () {
           closeSession();
           _logger.info('Closing session');
 
-          // ignore: use_build_context_synchronously, discarded_futures
-          Routerino.context.pushRootImmediately(() => const HomePage(initialTab: HomeTab.receive, appStart: false));
+          if (quickSave && !chatAuto) {
+            // ignore: use_build_context_synchronously, discarded_futures
+            Routerino.context.pushRootImmediately(() => const HomePage(initialTab: HomeTab.receive, appStart: false));
 
-          // open the dialog to open file instantly
-          if (filePath != null && filePath.isNotEmpty) {
-            // ignore: discarded_futures
-            OpenFileDialog.open(
-              Routerino.context, // ignore: use_build_context_synchronously
-              filePath: filePath,
-              fileType: fileType,
-              openGallery: savedToGallery,
-            );
+            // open the dialog to open file instantly
+            if (filePath != null && filePath.isNotEmpty) {
+              // ignore: discarded_futures
+              OpenFileDialog.open(
+                Routerino.context, // ignore: use_build_context_synchronously
+                filePath: filePath,
+                fileType: fileType,
+                openGallery: savedToGallery,
+              );
+            }
           }
         });
       }
